@@ -1,8 +1,8 @@
 #include "lib/fs_supports.hpp"
+#include "lib/fs_creator.hpp"
 #include "lib/errors.hpp"
 #include "utils/logs.hpp"
 #include <algorithm>
-#include <cstdlib>
 
 namespace FilesystemSupport {
     
@@ -38,38 +38,18 @@ namespace FilesystemSupport {
         return {"ext4", "ntfs", "exfat", "FAT32", "FAT64"};
     }
     
-    bool formatPartition(const std::string& device, FSType fs) {
+    bool formatPartition(const std::string& device, FSType fs, const std::string& label) {
         Logs::info("Formatting " + device + " as " + getFSName(fs));
         
-        std::string command;
-        
-        switch (fs) {
-            case FSType::EXT4:
-                command = "mkfs.ext4 -F " + device + " > /dev/null 2>&1";
-                break;
-            case FSType::NTFS:
-                command = "mkfs.ntfs -f " + device + " > /dev/null 2>&1";
-                break;
-            case FSType::EXFAT:
-                command = "mkfs.exfat " + device + " > /dev/null 2>&1";
-                break;
-            case FSType::FAT32:
-                command = "mkfs.vfat -F 32 " + device + " > /dev/null 2>&1";
-                break;
-            case FSType::FAT64:
-                command = "mkfs.vfat -F 64 " + device + " > /dev/null 2>&1";
-                break;
-            default:
-                throw FilesystemError("Unsupported filesystem type");
+        try {
+            std::string fsName = getFSName(fs);
+            FilesystemCreator::createFilesystem(device, fsName, label);
+            
+            Logs::success("Formatted " + device + " as " + getFSName(fs));
+            return true;
+            
+        } catch (const std::exception& e) {
+            throw FilesystemError("Failed to format partition: " + std::string(e.what()));
         }
-        
-        int result = system(command.c_str());
-        
-        if (result != 0) {
-            throw FilesystemError("Failed to format partition as " + getFSName(fs));
-        }
-        
-        Logs::success("Formatted " + device + " as " + getFSName(fs));
-        return true;
     }
 }

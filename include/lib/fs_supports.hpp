@@ -18,7 +18,7 @@ namespace FilesystemSupport {
     bool isSupported(FSType fs);
     std::string getFSName(FSType fs);
     std::vector<std::string> getSupportedFilesystems();
-    bool formatPartition(const std::string& device, FSType fs);
+    bool formatPartition(const std::string& device, FSType fs, const std::string& label = "");
 }
 
 #endif // FS_SUPPORTS_HPP

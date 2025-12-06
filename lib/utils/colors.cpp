@@ -35,6 +35,10 @@ namespace Colors {
         return CYAN + text + RESET;
     }
     
+    std::string white(const std::string& text) {
+        return WHITE + text + RESET;
+    }
+    
     std::string bold(const std::string& text) {
         return BOLD + text + RESET;
     }

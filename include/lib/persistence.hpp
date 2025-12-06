@@ -2,6 +2,7 @@
 #define PERSISTENCE_HPP
 
 #include "lib/fs_supports.hpp"
+#include "lib/mbr_gpt.hpp"
 #include <string>
 
 namespace Persistence {
@@ -15,7 +16,8 @@ namespace Persistence {
         const std::string& isoPath,
         const std::string& device,
         size_t persistenceSizeMB,
-        FilesystemSupport::FSType fsType
+        FilesystemSupport::FSType fsType,
+        BootStructures::TableType tableType = BootStructures::TableType::MBR
     );
     
     size_t calculateOptimalSize(size_t isoSize, size_t deviceSize);

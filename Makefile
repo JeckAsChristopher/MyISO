@@ -1,6 +1,6 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -O3 -Iinclude
-LDFLAGS = 
+CXXFLAGS = -std=c++17 -Wall -Wextra -O3 -Iinclude -D_FILE_OFFSET_BITS=64
+LDFLAGS = -lpthread
 
 TARGET = MI
 SRC_DIR = .
@@ -16,6 +16,9 @@ SOURCES = main.cpp \
           $(LIB_DIR)/dev_handler.cpp \
           $(LIB_DIR)/errors.cpp \
           $(LIB_DIR)/fs_supports.cpp \
+          $(LIB_DIR)/fs_creator.cpp \
+          $(LIB_DIR)/mbr_gpt.cpp \
+          $(LIB_DIR)/bootloader.cpp \
           $(UTILS_DIR)/colors.cpp \
           $(UTILS_DIR)/logs.cpp \
           $(UTILS_DIR)/progress_bar.cpp \

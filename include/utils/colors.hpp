@@ -20,6 +20,7 @@ namespace Colors {
     std::string yellow(const std::string& text);
     std::string blue(const std::string& text);
     std::string cyan(const std::string& text);
+    std::string white(const std::string& text);
     std::string bold(const std::string& text);
 }
 
