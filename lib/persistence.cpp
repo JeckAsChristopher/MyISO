@@ -8,6 +8,10 @@
 #include "utils/logs.hpp"
 #include <cmath>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/ioctl.h>
+#include <linux/fs.h>
+#include <fcntl.h>
 
 namespace Persistence {
     
@@ -134,8 +138,14 @@ namespace Persistence {
         uint32_t startSector = 2048;
         
         Logs::info("Creating ISO partition (" + std::to_string(isoSizeMB) + " MB)");
-        ptable.addMBRPartition(startSector, isoSectors, 
-                               BootStructures::PartitionType::FAT32_LBA, true);
+        
+        try {
+            ptable.addMBRPartition(startSector, isoSectors, 
+                                   BootStructures::PartitionType::FAT32_LBA, true);
+        } catch (const std::exception& e) {
+            Logs::error("Failed to add ISO partition to MBR: " + std::string(e.what()));
+            throw DeviceError(device, "Cannot create ISO partition in partition table");
+        }
         
         Logs::info("Creating persistence partition (" + 
                   std::to_string(persistenceSizeMB) + " MB)");
@@ -144,20 +154,51 @@ namespace Persistence {
             BootStructures::PartitionType::LINUX_NATIVE : 
             BootStructures::PartitionType::FAT32_LBA;
         
-        ptable.addMBRPartition(startSector + isoSectors, persistSectors, persistType, false);
+        try {
+            ptable.addMBRPartition(startSector + isoSectors, persistSectors, persistType, false);
+        } catch (const std::exception& e) {
+            Logs::error("Failed to add persistence partition to MBR: " + std::string(e.what()));
+            throw DeviceError(device, "Cannot create persistence partition in partition table");
+        }
         
         ptable.commit();
         
         sleep(2);
-        system(("partprobe " + device + " 2>/dev/null").c_str());
-        sleep(2);
         
-        std::string part1 = device;
-        if (device.back() >= '0' && device.back() <= '9') {
-            part1 = device + "1";
+        int fd = open(device.c_str(), O_RDONLY);
+        if (fd >= 0) {
+            ioctl(fd, BLKRRPART);
+            close(fd);
+        }
+        
+        system(("partprobe " + device + " 2>/dev/null").c_str());
+        sleep(3);
+        
+        // Determine partition device names
+        std::string part1, part2;
+        if (device.find("nvme") != std::string::npos || 
+            device.find("mmcblk") != std::string::npos) {
+            part1 = device + "p1";
+            part2 = device + "p2";
         } else {
             part1 = device + "1";
+            part2 = device + "2";
         }
+        
+        // Verify partitions exist
+        struct stat st;
+        if (stat(part1.c_str(), &st) != 0) {
+            Logs::warning("Partition " + part1 + " not found, waiting...");
+            sleep(2);
+            system(("partprobe " + device + " 2>/dev/null").c_str());
+            sleep(2);
+            
+            if (stat(part1.c_str(), &st) != 0) {
+                throw DeviceError(device, "Partition " + part1 + " was not created by kernel");
+            }
+        }
+        
+        Logs::success("Partitions created and verified: " + part1 + ", " + part2);
         
         Logs::info("Formatting first partition as FAT32");
         FilesystemCreator::createFilesystem(part1, "fat32", "MYISO");

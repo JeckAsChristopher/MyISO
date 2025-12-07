@@ -184,6 +184,10 @@ namespace BootStructures {
     
     bool PartitionTable::addMBRPartition(uint32_t startLBA, uint32_t sectorCount,
                                          PartitionType type, bool bootable) {
+        Logs::info("Adding MBR partition: start=" + std::to_string(startLBA) + 
+                  " sectors=" + std::to_string(sectorCount) + 
+                  " bootable=" + std::string(bootable ? "yes" : "no"));
+        
         MBR mbr;
         
         if (lseek(deviceFd, 0, SEEK_SET) != 0) {
@@ -194,6 +198,7 @@ namespace BootStructures {
             throw DeviceError(device, "Failed to read MBR");
         }
         
+        // Find first free partition slot
         int partIndex = -1;
         for (int i = 0; i < 4; i++) {
             if (mbr.partitions[i].partitionType == 0x00) {
@@ -207,6 +212,8 @@ namespace BootStructures {
         }
         
         MBRPartitionEntry& part = mbr.partitions[partIndex];
+        memset(&part, 0, sizeof(MBRPartitionEntry));
+        
         part.status = bootable ? 0x80 : 0x00;
         part.partitionType = static_cast<uint8_t>(type);
         part.firstLBA = startLBA;
@@ -214,6 +221,20 @@ namespace BootStructures {
         
         calculateCHS(startLBA, part.firstCHS);
         calculateCHS(startLBA + sectorCount - 1, part.lastCHS);
+        
+        // Validate partition entry
+        if (part.sectorCount == 0) {
+            throw DeviceError(device, "Invalid partition size (0 sectors)");
+        }
+        
+        if (part.firstLBA + part.sectorCount > deviceSectors) {
+            throw DeviceError(device, "Partition extends beyond device size");
+        }
+        
+        Logs::debug("Partition " + std::to_string(partIndex + 1) + ": " +
+                   "LBA=" + std::to_string(part.firstLBA) + 
+                   " Size=" + std::to_string(part.sectorCount) + 
+                   " Type=0x" + std::to_string(part.partitionType));
         
         if (lseek(deviceFd, 0, SEEK_SET) != 0) {
             throw DeviceError(device, "Failed to seek for MBR write");

@@ -5,6 +5,8 @@
 #include "lib/fs_supports.hpp"
 #include "lib/errors.hpp"
 #include "lib/mbr_gpt.hpp"
+#include "lib/iso_analyzer.hpp"
+#include "lib/smart_burner.hpp"
 #include "utils/logs.hpp"
 #include "utils/colors.hpp"
 #include "misc/version.hpp"
@@ -328,6 +330,15 @@ int main(int argc, char* argv[]) {
         std::string isoType = ISOBurner::detectISOType(opts.isoPath);
         Logs::info("ISO Type: " + isoType);
         
+        // Perform deep analysis
+        ISOAnalyzer::ISOStructure isoStructure = ISOAnalyzer::SmartAnalyzer::analyzeISO(opts.isoPath);
+        int requiredParts = ISOAnalyzer::SmartAnalyzer::calculateRequiredPartitions(
+            isoStructure, opts.usePersistence);
+        std::string strategy = ISOAnalyzer::SmartAnalyzer::getRecommendedStrategy(isoStructure);
+        
+        Logs::info("Analysis: " + strategy);
+        Logs::info("Required Partitions: " + std::to_string(requiredParts));
+        
         size_t deviceSize = DeviceHandler::getDeviceSize(opts.device);
         size_t isoSize = ISOBurner::getISOSize(opts.isoPath);
         
@@ -399,50 +410,28 @@ int main(int argc, char* argv[]) {
             Logs::warning("Proceeding with --force flag");
         }
         
-        if (opts.usePersistence) {
-            Logs::info("Persistence enabled: " + 
-                      std::to_string(opts.persistenceSize) + " MB (" +
-                      FilesystemSupport::getFSName(opts.fsType) + ")");
-            Logs::info("Partition table: " + 
-                      std::string(opts.tableType == BootStructures::TableType::MBR ? "MBR" : "GPT"));
-            
-            try {
-                Persistence::setupPersistence(
-                    opts.isoPath,
-                    opts.device,
-                    opts.persistenceSize,
-                    opts.fsType,
-                    opts.tableType
-                );
-            } catch (const std::exception& e) {
-                Logs::warning("Primary persistence method failed: " + 
-                             std::string(e.what()));
-                Logs::info("Attempting fallback method...");
-                
-                PersistenceFallback::setupFallbackPersistence(
-                    opts.isoPath,
-                    opts.device,
-                    opts.persistenceSize
-                );
-            }
-        } else {
-            Logs::info("Starting standard ISO burn without persistence");
-            
-            DeviceHandler::unmountDevice(opts.device);
-            
-            Logs::info("Wiping existing data on device");
-            DeviceHandler::wipeDevice(opts.device);
-            
-            ISOBurner::BurnMode mode = opts.useFastMode ? 
-                ISOBurner::BurnMode::FAST : ISOBurner::BurnMode::RAW;
-            
-            ISOBurner::burnISO(opts.isoPath, opts.device, mode);
-            DeviceHandler::syncDevice(opts.device);
-        }
+        // Use intelligent burning system
+        SmartBurner::BurnConfig burnConfig;
+        burnConfig.isoPath = opts.isoPath;
+        burnConfig.device = opts.device;
+        burnConfig.isoStructure = isoStructure;
+        burnConfig.strategy = ISOAnalyzer::determineBurnStrategy(isoStructure);
+        burnConfig.persistence = opts.usePersistence;
+        burnConfig.persistenceSizeMB = opts.persistenceSize;
+        burnConfig.persistenceFS = FilesystemSupport::getFSName(opts.fsType);
+        burnConfig.fastMode = opts.useFastMode;
         
-        std::cout << "\n" << Colors::green(Colors::bold("✓ SUCCESS!")) << std::endl;
-        Logs::success("Bootable USB created successfully!");
-        Logs::info("You can now safely remove " + opts.device);
+        Logs::info("Starting intelligent burn operation...");
+        
+        bool success = SmartBurner::IntelligentBurner::burnWithStrategy(burnConfig);
+        
+        if (success) {
+            std::cout << "\n" << Colors::green(Colors::bold("✓ SUCCESS!")) << std::endl;
+            Logs::success("Bootable USB created successfully!");
+            Logs::info("You can now safely remove " + opts.device);
+        } else {
+            throw MyISOException("Burn operation failed");
+        }
         
         return 0;
         

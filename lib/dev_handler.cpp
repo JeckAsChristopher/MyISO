@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <cstdlib>
 #include <cstring>
+#include <cstdio>
 
 namespace DeviceHandler {
     
@@ -151,21 +152,74 @@ namespace DeviceHandler {
     std::string createPartition(const std::string& device, size_t sizeInMB) {
         Logs::info("Creating partition of " + std::to_string(sizeInMB) + " MB");
         
-        std::string cmd = "parted -s " + device + 
-                          " mkpart primary ext4 1MiB " + 
-                          std::to_string(sizeInMB) + "MiB 2>/dev/null";
+        // Calculate sector positions (sector size = 512 bytes)
+        uint32_t startSector = 2048; // Start at 1MB for proper alignment
+        uint32_t sizeInSectors = (sizeInMB * 1024 * 1024) / 512;
+        uint32_t endSector = startSector + sizeInSectors - 1;
         
-        int result = system(cmd.c_str());
+        // Use sfdisk for reliable partition creation
+        std::string sfdiskCmd = "echo 'start=" + std::to_string(startSector) + 
+                                ", size=" + std::to_string(sizeInSectors) + 
+                                ", type=c, bootable' | sfdisk " + device + " 2>&1";
         
-        if (result != 0) {
-            throw DeviceError(device, "Failed to create partition");
+        Logs::debug("Executing: " + sfdiskCmd);
+        
+        FILE* pipe = popen(sfdiskCmd.c_str(), "r");
+        if (!pipe) {
+            throw DeviceError(device, "Failed to execute sfdisk command");
         }
         
-        sleep(1);
-        system(("partprobe " + device + " 2>/dev/null").c_str());
+        char buffer[256];
+        std::string output;
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            output += buffer;
+        }
+        
+        int result = pclose(pipe);
+        
+        if (result != 0) {
+            Logs::error("sfdisk output: " + output);
+            throw DeviceError(device, "Failed to create partition with sfdisk");
+        }
+        
+        // Force kernel to re-read partition table
         sleep(1);
         
-        return device + "1";
+        int fd = open(device.c_str(), O_RDONLY);
+        if (fd >= 0) {
+            if (ioctl(fd, BLKRRPART) < 0) {
+                Logs::warning("Failed to refresh partition table, trying partprobe");
+            }
+            close(fd);
+        }
+        
+        system(("partprobe " + device + " 2>/dev/null").c_str());
+        sleep(2);
+        
+        // Determine partition name
+        std::string partitionDevice;
+        if (device.find("nvme") != std::string::npos || 
+            device.find("mmcblk") != std::string::npos) {
+            partitionDevice = device + "p1";
+        } else {
+            partitionDevice = device + "1";
+        }
+        
+        // Verify partition exists
+        struct stat st;
+        int attempts = 0;
+        while (attempts < 10 && stat(partitionDevice.c_str(), &st) != 0) {
+            sleep(1);
+            attempts++;
+            system(("partprobe " + device + " 2>/dev/null").c_str());
+        }
+        
+        if (stat(partitionDevice.c_str(), &st) != 0) {
+            throw DeviceError(device, "Partition " + partitionDevice + " not found after creation");
+        }
+        
+        Logs::success("Partition created: " + partitionDevice);
+        return partitionDevice;
     }
     
     bool syncDevice(const std::string& device) {

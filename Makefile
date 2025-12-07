@@ -13,6 +13,8 @@ SOURCES = main.cpp \
           $(LIB_DIR)/persistence.cpp \
           $(LIB_DIR)/persistence_fallback.cpp \
           $(LIB_DIR)/iso_burner.cpp \
+          $(LIB_DIR)/iso_analyzer.cpp \
+          $(LIB_DIR)/smart_burner.cpp \
           $(LIB_DIR)/dev_handler.cpp \
           $(LIB_DIR)/errors.cpp \
           $(LIB_DIR)/fs_supports.cpp \
