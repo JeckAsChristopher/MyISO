@@ -73,15 +73,39 @@ namespace BootStructures {
         // Initialize boot code area with NOPs for safety
         memset(mbr.bootCode, 0x90, sizeof(mbr.bootCode));
         
-        // Add minimal boot code stub
-        mbr.bootCode[0] = 0xFA;  // CLI
-        mbr.bootCode[1] = 0x31;  // XOR AX, AX
-        mbr.bootCode[2] = 0xC0;
-        mbr.bootCode[3] = 0x8E;  // MOV SS, AX
-        mbr.bootCode[4] = 0xD0;
-        mbr.bootCode[5] = 0xBC;  // MOV SP, 0x7C00
-        mbr.bootCode[6] = 0x00;
-        mbr.bootCode[7] = 0x7C;
+        // Add complete boot code stub for proper booting
+        uint8_t bootStub[] = {
+            0xFA,                   // CLI
+            0x31, 0xC0,             // XOR AX, AX
+            0x8E, 0xD0,             // MOV SS, AX
+            0xBC, 0x00, 0x7C,       // MOV SP, 0x7C00
+            0x8E, 0xD8,             // MOV DS, AX
+            0x8E, 0xC0,             // MOV ES, AX
+            0xFB,                   // STI
+            0xBE, 0x00, 0x7C,       // MOV SI, 0x7C00
+            0xBF, 0x00, 0x06,       // MOV DI, 0x0600
+            0xB9, 0x00, 0x02,       // MOV CX, 0x0200
+            0xFC,                   // CLD
+            0xF3, 0xA4,             // REP MOVSB
+            0xEA, 0x1F, 0x06, 0x00, 0x00,  // JMP 0x0000:0x061F
+            0xBE, 0xBE, 0x07,       // MOV SI, 0x07BE
+            0xB3, 0x04,             // MOV BL, 4
+            0x80, 0x3C, 0x80,       // CMP BYTE PTR [SI], 0x80
+            0x74, 0x0E,             // JE short 0x06
+            0x80, 0x3C, 0x00,       // CMP BYTE PTR [SI], 0
+            0x75, 0x1C,             // JNE short 0x18
+            0x83, 0xC6, 0x10,       // ADD SI, 0x10
+            0xFE, 0xCB,             // DEC BL
+            0x75, 0xEF,             // JNE short -0x11
+            0xCD, 0x18,             // INT 0x18
+            0x8B, 0x14,             // MOV DX, [SI]
+            0x8B, 0x4C, 0x02,       // MOV CX, [SI+2]
+            0x8B, 0xEE,             // MOV BP, SI
+        };
+        
+        size_t stubSize = sizeof(bootStub);
+        if (stubSize > sizeof(mbr.bootCode)) stubSize = sizeof(mbr.bootCode);
+        memcpy(mbr.bootCode, bootStub, stubSize);
         
         mbr.signature = 0xAA55;
         
@@ -98,14 +122,6 @@ namespace BootStructures {
         if (written != sizeof(MBR)) {
             throw DeviceError(device, "Failed to write MBR (wrote " + 
                             std::to_string(written) + " bytes)");
-        }
-        
-        // Write protective sectors (prevent accidental overwrites)
-        uint8_t protective[512];
-        memset(protective, 0, sizeof(protective));
-        for (int i = 1; i < 2048; i++) {
-            if (lseek(deviceFd, i * 512, SEEK_SET) != i * 512) continue;
-            write(deviceFd, protective, 512);
         }
         
         fsync(deviceFd);

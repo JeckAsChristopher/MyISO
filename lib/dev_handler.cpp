@@ -4,9 +4,13 @@
 #include <fstream>
 #include <sys/stat.h>
 #include <sys/mount.h>
+#include <sys/ioctl.h>
+#include <linux/fs.h>
 #include <mntent.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <cstdlib>
+#include <cstring>
 
 namespace DeviceHandler {
     
@@ -55,6 +59,63 @@ namespace DeviceHandler {
             system(cmd.c_str());
         }
         
+        return true;
+    }
+    
+    bool wipeDevice(const std::string& device) {
+        Logs::info("Wiping device " + device + " (clearing all partition data)");
+        
+        int fd = open(device.c_str(), O_WRONLY | O_SYNC);
+        if (fd < 0) {
+            throw DeviceError(device, "Cannot open device for wiping");
+        }
+        
+        // Zero out first 10MB (MBR, GPT, partition tables, filesystem signatures)
+        const size_t WIPE_SIZE = 10 * 1024 * 1024;
+        const size_t BUFFER_SIZE = 1024 * 1024; // 1MB buffer
+        
+        uint8_t* zeros = new uint8_t[BUFFER_SIZE];
+        memset(zeros, 0, BUFFER_SIZE);
+        
+        size_t totalWritten = 0;
+        while (totalWritten < WIPE_SIZE) {
+            ssize_t written = write(fd, zeros, BUFFER_SIZE);
+            if (written < 0) {
+                delete[] zeros;
+                close(fd);
+                throw DeviceError(device, "Failed to wipe device");
+            }
+            totalWritten += written;
+        }
+        
+        // Also zero out last 10MB (backup GPT)
+        uint64_t deviceSize;
+        if (ioctl(fd, BLKGETSIZE64, &deviceSize) == 0) {
+            off_t endPosition = deviceSize - WIPE_SIZE;
+            if (lseek(fd, endPosition, SEEK_SET) == endPosition) {
+                totalWritten = 0;
+                while (totalWritten < WIPE_SIZE) {
+                    ssize_t written = write(fd, zeros, BUFFER_SIZE);
+                    if (written < 0) break;
+                    totalWritten += written;
+                }
+            }
+        }
+        
+        delete[] zeros;
+        fsync(fd);
+        close(fd);
+        
+        // Force kernel to re-read partition table
+        fd = open(device.c_str(), O_RDONLY);
+        if (fd >= 0) {
+            ioctl(fd, BLKRRPART);
+            close(fd);
+        }
+        
+        sleep(1);
+        
+        Logs::success("Device wiped successfully");
         return true;
     }
     

@@ -116,6 +116,9 @@ namespace Persistence {
         
         DeviceHandler::unmountDevice(device);
         
+        Logs::info("Wiping existing data on device");
+        DeviceHandler::wipeDevice(device);
+        
         Logs::info("Creating " + tableTypeStr + " partition table");
         BootStructures::PartitionTable ptable(device, tableType);
         ptable.initialize();

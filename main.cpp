@@ -52,6 +52,7 @@ void printUsage() {
     std::cout << "  MI -i debian.iso -o /dev/sdb -asi\n\n";
     
     std::cout << Colors::yellow("Note: ") << "This tool requires root privileges (use sudo)\n";
+    std::cout << Colors::yellow("      Device must be whole disk (e.g., /dev/sdb), not partition (e.g., /dev/sdb1)\n");
 }
 
 bool parseArguments(int argc, char* argv[], Options& opts) {
@@ -425,7 +426,12 @@ int main(int argc, char* argv[]) {
                 );
             }
         } else {
+            Logs::info("Starting standard ISO burn without persistence");
+            
             DeviceHandler::unmountDevice(opts.device);
+            
+            Logs::info("Wiping existing data on device");
+            DeviceHandler::wipeDevice(opts.device);
             
             ISOBurner::BurnMode mode = opts.useFastMode ? 
                 ISOBurner::BurnMode::FAST : ISOBurner::BurnMode::RAW;

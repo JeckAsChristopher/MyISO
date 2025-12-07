@@ -6,7 +6,11 @@ A powerful, production-grade command-line tool for creating bootable USB drives 
 **Jeck Christopher Anog**
 
 ## Version
-0.5.7
+0.5.8
+
+### Update Logs
+**0.5.7** - Optimize filesystem creations, ISO FORMAT detection, optimize **MBR** **GPT**
+**0.5.8** - Fixed the critical issue on deleting previous cluster and partition on the target usb. Optimize Partition Tables. that often crashes.
 
 ## Advanced Features
 
