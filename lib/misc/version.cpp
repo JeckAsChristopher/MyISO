@@ -3,7 +3,7 @@
 #include <iostream>
 
 namespace Version {
-    const std::string VERSION = "0.2.4 prerelease";
+    const std::string VERSION = "0.5.7";
     const std::string AUTHOR = "Jeck Christopher Anog";
     const std::string LICENSE = "Open Source Project";
     

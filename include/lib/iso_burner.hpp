@@ -9,7 +9,15 @@ namespace ISOBurner {
         FAST
     };
     
+    enum class ISOType {
+        PURE_ISO,
+        EL_TORITO,
+        HYBRID,
+        UNKNOWN
+    };
+    
     bool validateISO(const std::string& isoPath);
+    std::string detectISOType(const std::string& isoPath);
     size_t getISOSize(const std::string& isoPath);
     bool burnISO(const std::string& isoPath, const std::string& device, BurnMode mode);
     bool burnRawMode(const std::string& isoPath, const std::string& device);

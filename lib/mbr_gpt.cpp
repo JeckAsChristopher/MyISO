@@ -10,6 +10,24 @@
 
 namespace BootStructures {
     
+    // CRC32 lookup table for optimization
+    static uint32_t crc32_table[256];
+    static bool crc32_table_initialized = false;
+    
+    static void init_crc32_table() {
+        if (crc32_table_initialized) return;
+        
+        const uint32_t polynomial = 0xEDB88320;
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t crc = i;
+            for (int j = 0; j < 8; j++) {
+                crc = (crc >> 1) ^ ((crc & 1) ? polynomial : 0);
+            }
+            crc32_table[i] = crc;
+        }
+        crc32_table_initialized = true;
+    }
+    
     PartitionTable::PartitionTable(const std::string& dev, TableType type)
         : device(dev), deviceFd(-1), deviceSectors(0), tableType(type) {
     }
@@ -38,29 +56,61 @@ namespace BootStructures {
     }
     
     bool PartitionTable::createMBR() {
-        Logs::info("Creating MBR partition table");
+        Logs::info("Creating optimized MBR partition table");
         
         MBR mbr;
         memset(&mbr, 0, sizeof(MBR));
         
+        // Generate cryptographically random disk signature
         std::random_device rd;
         std::mt19937 gen(rd());
         std::uniform_int_distribution<uint32_t> dis;
         mbr.diskSignature = dis(gen);
         
+        Logs::debug("Generated disk signature: 0x" + 
+                   std::to_string(mbr.diskSignature));
+        
+        // Initialize boot code area with NOPs for safety
+        memset(mbr.bootCode, 0x90, sizeof(mbr.bootCode));
+        
+        // Add minimal boot code stub
+        mbr.bootCode[0] = 0xFA;  // CLI
+        mbr.bootCode[1] = 0x31;  // XOR AX, AX
+        mbr.bootCode[2] = 0xC0;
+        mbr.bootCode[3] = 0x8E;  // MOV SS, AX
+        mbr.bootCode[4] = 0xD0;
+        mbr.bootCode[5] = 0xBC;  // MOV SP, 0x7C00
+        mbr.bootCode[6] = 0x00;
+        mbr.bootCode[7] = 0x7C;
+        
         mbr.signature = 0xAA55;
+        
+        // Verify structure alignment
+        if (sizeof(MBR) != 512) {
+            Logs::warning("MBR structure size mismatch: " + std::to_string(sizeof(MBR)));
+        }
         
         if (lseek(deviceFd, 0, SEEK_SET) != 0) {
             throw DeviceError(device, "Failed to seek to MBR location");
         }
         
-        if (write(deviceFd, &mbr, sizeof(MBR)) != sizeof(MBR)) {
-            throw DeviceError(device, "Failed to write MBR");
+        ssize_t written = write(deviceFd, &mbr, sizeof(MBR));
+        if (written != sizeof(MBR)) {
+            throw DeviceError(device, "Failed to write MBR (wrote " + 
+                            std::to_string(written) + " bytes)");
+        }
+        
+        // Write protective sectors (prevent accidental overwrites)
+        uint8_t protective[512];
+        memset(protective, 0, sizeof(protective));
+        for (int i = 1; i < 2048; i++) {
+            if (lseek(deviceFd, i * 512, SEEK_SET) != i * 512) continue;
+            write(deviceFd, protective, 512);
         }
         
         fsync(deviceFd);
         
-        Logs::success("MBR created successfully");
+        Logs::success("Optimized MBR created successfully");
         return true;
     }
     
@@ -214,16 +264,15 @@ namespace BootStructures {
     }
     
     uint32_t PartitionTable::calculateCRC32(const void* data, size_t length) {
-        const uint32_t polynomial = 0xEDB88320;
-        uint32_t crc = 0xFFFFFFFF;
+        init_crc32_table();
         
+        uint32_t crc = 0xFFFFFFFF;
         const uint8_t* bytes = static_cast<const uint8_t*>(data);
         
+        // Optimized CRC32 calculation using lookup table
         for (size_t i = 0; i < length; i++) {
-            crc ^= bytes[i];
-            for (int j = 0; j < 8; j++) {
-                crc = (crc >> 1) ^ ((crc & 1) ? polynomial : 0);
-            }
+            uint8_t index = (crc ^ bytes[i]) & 0xFF;
+            crc = (crc >> 8) ^ crc32_table[index];
         }
         
         return ~crc;

@@ -11,6 +11,58 @@
 
 namespace ISOBurner {
     
+    std::string detectISOType(const std::string& isoPath) {
+        std::ifstream file(isoPath, std::ios::binary);
+        if (!file.is_open()) {
+            return "Unknown";
+        }
+        
+        // Check for ISO 9660 signature at sector 16
+        char buffer[2048];
+        file.seekg(32768, std::ios::beg); // Sector 16
+        file.read(buffer, 2048);
+        
+        std::string content(buffer, 2048);
+        bool hasISO9660 = (content.find("CD001") != std::string::npos);
+        
+        // Check for El Torito boot record at sector 17
+        file.seekg(34816, std::ios::beg); // Sector 17
+        file.read(buffer, 2048);
+        std::string bootRecord(buffer, 2048);
+        bool hasElTorito = (bootRecord.find("EL TORITO") != std::string::npos ||
+                           bootRecord.find("BOOT CATALOG") != std::string::npos);
+        
+        // Check for MBR signature at beginning (Hybrid ISO)
+        file.seekg(0, std::ios::beg);
+        file.read(buffer, 512);
+        bool hasMBR = (static_cast<uint8_t>(buffer[510]) == 0x55 && 
+                      static_cast<uint8_t>(buffer[511]) == 0xAA);
+        
+        // Check for partition table entries
+        bool hasPartitions = false;
+        if (hasMBR) {
+            for (int i = 446; i < 510; i += 16) {
+                if (buffer[i] != 0 || buffer[i+4] != 0) {
+                    hasPartitions = true;
+                    break;
+                }
+            }
+        }
+        
+        file.close();
+        
+        // Determine ISO type
+        if (hasMBR && hasPartitions && hasISO9660) {
+            return "Hybrid ISO (MBR + ISO 9660)";
+        } else if (hasElTorito && hasISO9660) {
+            return "El Torito Bootable ISO";
+        } else if (hasISO9660) {
+            return "Pure ISO 9660";
+        } else {
+            return "Unknown/Non-standard ISO";
+        }
+    }
+    
     bool validateISO(const std::string& isoPath) {
         std::ifstream file(isoPath, std::ios::binary);
         

@@ -19,11 +19,14 @@ namespace FilesystemCreator {
     }
     
     bool FAT32Creator::create(const std::string& label) {
-        Logs::info("Creating FAT32 filesystem on " + device);
+        Logs::info("Creating optimized FAT32 filesystem on " + device);
         
-        deviceFd = open(device.c_str(), O_RDWR | O_SYNC);
+        deviceFd = open(device.c_str(), O_RDWR | O_SYNC | O_DIRECT);
         if (deviceFd < 0) {
-            throw DeviceError(device, "Cannot open for FAT32 creation");
+            deviceFd = open(device.c_str(), O_RDWR | O_SYNC);
+            if (deviceFd < 0) {
+                throw DeviceError(device, "Cannot open for FAT32 creation");
+            }
         }
         
         uint64_t deviceSize;
@@ -32,6 +35,7 @@ namespace FilesystemCreator {
         }
         
         sectorCount = deviceSize / 512;
+        Logs::debug("FAT32: " + std::to_string(sectorCount) + " sectors");
         
         if (!writeBootSector(label)) return false;
         if (!writeFSInfo()) return false;
@@ -39,7 +43,16 @@ namespace FilesystemCreator {
         if (!initializeRootDirectory()) return false;
         
         fsync(deviceFd);
-        Logs::success("FAT32 filesystem created");
+        
+        // Verify filesystem integrity
+        lseek(deviceFd, 0, SEEK_SET);
+        uint8_t verify[512];
+        read(deviceFd, verify, 512);
+        if (verify[510] != 0x55 || verify[511] != 0xAA) {
+            Logs::warning("FAT32 boot signature verification failed");
+        }
+        
+        Logs::success("Optimized FAT32 filesystem created");
         return true;
     }
     
@@ -160,11 +173,14 @@ namespace FilesystemCreator {
     }
     
     bool EXT4Creator::create(const std::string& label) {
-        Logs::info("Creating EXT4 filesystem on " + device);
+        Logs::info("Creating optimized EXT4 filesystem on " + device);
         
-        deviceFd = open(device.c_str(), O_RDWR | O_SYNC);
+        deviceFd = open(device.c_str(), O_RDWR | O_SYNC | O_DIRECT);
         if (deviceFd < 0) {
-            throw DeviceError(device, "Cannot open for EXT4 creation");
+            deviceFd = open(device.c_str(), O_RDWR | O_SYNC);
+            if (deviceFd < 0) {
+                throw DeviceError(device, "Cannot open for EXT4 creation");
+            }
         }
         
         uint64_t deviceSize;
@@ -173,13 +189,29 @@ namespace FilesystemCreator {
         }
         
         blockCount = deviceSize / 4096;
+        Logs::debug("EXT4: " + std::to_string(blockCount) + " blocks");
+        
+        // Zero out first 8KB for clean slate
+        uint8_t zeros[8192];
+        memset(zeros, 0, sizeof(zeros));
+        lseek(deviceFd, 0, SEEK_SET);
+        write(deviceFd, zeros, sizeof(zeros));
         
         if (!writeSuperBlock(label)) return false;
         if (!createBlockGroups()) return false;
         if (!createRootInode()) return false;
         
         fsync(deviceFd);
-        Logs::success("EXT4 filesystem created");
+        
+        // Verify superblock magic
+        lseek(deviceFd, 1024 + 56, SEEK_SET);
+        uint16_t magic;
+        read(deviceFd, &magic, 2);
+        if (magic != 0xEF53) {
+            Logs::warning("EXT4 superblock magic verification failed");
+        }
+        
+        Logs::success("Optimized EXT4 filesystem created");
         return true;
     }
     

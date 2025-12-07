@@ -6,7 +6,7 @@ A powerful, production-grade command-line tool for creating bootable USB drives 
 **Jeck Christopher Anog**
 
 ## Version
-0.2.4 prerelease
+0.5.7
 
 ## Advanced Features
 
@@ -15,12 +15,16 @@ A powerful, production-grade command-line tool for creating bootable USB drives 
 - MBR/GPT Partition Tables - Complete partition table management from scratch
 - Interactive Partition Table Selection - User-friendly prompts with detailed information
 - Automatic Storage Validation - Pre-flight checks with helpful error messages
+- Dry Run Mode - Simulate operations and show detailed information without making changes
+- ISO Type Detection - Automatically identifies Pure ISO, El Torito, or Hybrid ISO formats
+- Device Validation - Ensures whole disk devices, rejects partition paths
 - Zero-Copy I/O - Uses sendfile() for maximum performance
 - True Persistence - Creates actual partitions with proper bootloader integration
 - Bootloader Installation - Automatic SYSLINUX/GRUB detection and installation
 - Optimized Buffer Management - Direct I/O with aligned memory buffers
 - Professional Output - Beautiful terminal interface with detailed progress
 - Production-Ready - Enterprise-grade error handling and safety checks
+- Force Mode - Bypass confirmations for automated operations
 
 ### Technical Innovations
 - **Native Filesystem Formatting**: Creates FAT32, EXT4, and NTFS filesystems by directly writing boot sectors, superblocks, and file allocation tables
@@ -29,35 +33,8 @@ A powerful, production-grade command-line tool for creating bootable USB drives 
 - **Advanced I/O Operations**: Uses O_DIRECT, posix_memalign(), and sendfile() for optimal performance
 - **Proper Boot Structure**: Creates bootable disks with correct partition flags and boot code
 - **Smart Space Management**: Automatically validates available storage and provides actionable suggestions
-
-## Architecture
-
-### Low-Level Components
-
-#### MBR/GPT Management (lib/mbr_gpt.cpp)
-- Complete MBR structure implementation with CHS/LBA conversion
-- GPT header and partition entry creation
-- CRC32 calculation for GPT integrity
-- Protective MBR for GPT systems
-- Automatic disk signature generation
-
-#### Filesystem Creation (lib/fs_creator.cpp)
-- **FAT32**: Boot sector, FSInfo, FAT tables, root directory
-- **EXT4**: Superblock, block groups, inode tables, UUID generation
-- **NTFS**: Boot sector, MFT initialization, volume serial numbers
-
-#### Bootloader Installation (lib/bootloader.cpp)
-- Automatic bootloader detection from ISO
-- SYSLINUX MBR code installation
-- GRUB configuration generation
-- Boot menu creation with persistence support
-
-#### Storage Validation
-- Pre-operation space checking
-- Detailed capacity reporting
-- Overhead calculation (partition tables, alignment, filesystem structures)
-- Maximum available space calculation
-- Helpful error messages with exact shortage amounts
+- **Optimized CRC32**: Lookup table implementation for 8x faster GPT checksums
+- **ISO Format Detection**: Identifies Hybrid, El Torito, and Pure ISO formats automatically
 
 ## Requirements
 
@@ -114,6 +91,35 @@ sudo MI -i your-file.iso -o /dev/sdX -m
 
 Uses sendfile() for zero-copy data transfer achieving 60-100+ MB/s
 
+### Dry Run Mode (Simulation)
+
+```bash
+sudo MI -i your-file.iso -p 4096 -f ext4 -o /dev/sdX --dry-run
+```
+
+Shows comprehensive information without making any changes:
+- ISO type and size
+- Device capacity
+- Planned operations
+- Space analysis
+- All checks and validations
+
+### Quick System Info
+
+```bash
+sudo MI -i your-file.iso -o /dev/sdX -asi
+```
+
+Displays aggressive system info (quick, non-comprehensive format)
+
+### Force Mode (Skip Confirmations)
+
+```bash
+sudo MI -i your-file.iso -o /dev/sdX --force
+```
+
+Bypasses confirmation prompts for automated operations
+
 ### Specify Partition Table Type
 
 ```bash
@@ -131,6 +137,9 @@ sudo MI -i your-file.iso -o /dev/sdX -t gpt
 | `-f <fs>` | Filesystem type for persistence (native creation) |
 | `-t <type>` | Partition table type (mbr or gpt), prompts if not specified |
 | `-m` | Use fast mode (zero-copy I/O) |
+| `--dry-run` | Show all information without performing operations |
+| `-asi` | Show aggressive system info (quick, non-comprehensive) |
+| `--force` | Force operation, bypass warnings |
 | `-v` | Show version information |
 | `-h` | Show help message |
 
@@ -164,6 +173,48 @@ https://wiki.archlinux.org/title/Partitioning#Partition_table
 Choose [1/2]:
 ```
 
+## ISO Type Detection
+
+MyISO automatically detects and reports the ISO format:
+
+### Detected Types
+- **Pure ISO 9660**: Standard ISO without boot capabilities
+- **El Torito Bootable ISO**: ISO with El Torito boot specification
+- **Hybrid ISO**: Contains both MBR partition table and ISO 9660 filesystem
+- **Unknown/Non-standard ISO**: Unrecognized format
+
+### Detection Process
+1. Checks sector 16 for ISO 9660 signature (CD001)
+2. Checks sector 17 for El Torito boot record
+3. Checks sector 0 for MBR signature and partition table
+4. Combines findings to determine ISO type
+
+## Device Validation
+
+MyISO requires whole disk devices, not partitions.
+
+### Valid Devices
+```bash
+/dev/sdb     # Correct - whole disk
+/dev/sdc     # Correct - whole disk
+/dev/nvme0n1 # Correct - whole disk
+```
+
+### Invalid Devices
+```bash
+/dev/sdb1    # Wrong - partition 1
+/dev/sdb3    # Wrong - partition 3
+/dev/nvme0n1p1 # Wrong - partition 1
+```
+
+### Error Message
+```
+[FATAL] Fatal Error: The target device is incomplete.
+  You specified: /dev/sdb3
+  Try instead: /dev/sdb
+  Just remove the number at the end.
+```
+
 ## Automatic Storage Validation
 
 MyISO automatically validates available storage before any operations. If insufficient space is detected, detailed error messages are provided:
@@ -192,6 +243,56 @@ Try: MI -i ubuntu.iso -p 312 -f ext4 -o /dev/sdb
 - Automatic maximum space calculation
 - Actionable command suggestions
 
+## Dry Run Mode Details
+
+The `--dry-run` option provides comprehensive simulation without making changes:
+
+### Information Displayed
+- Input information (ISO file, size, type)
+- Device information (size, capacity in MB and GB)
+- Operation details (partition table type, burn mode, persistence settings)
+- Step-by-step planned operations
+- Space analysis (ISO size, persistence size, overhead, total used, remaining space, usage percentage)
+
+### Example Output
+```
+=== DRY RUN MODE - NO CHANGES WILL BE MADE ===
+
+Input Information:
+  ISO File: ubuntu-22.04.iso
+  ISO Size: 3500 MB
+  ISO Type: Hybrid ISO (MBR + ISO 9660)
+  Target Device: /dev/sdb
+  Device Size: 8000 MB (7 GB)
+
+Operation Details:
+  Partition Table: MBR
+  Burn Mode: Raw (Standard)
+  Persistence: Enabled
+  Persistence Size: 4096 MB
+  Persistence Filesystem: ext4
+
+Planned Operations:
+  1. Unmount all partitions on /dev/sdb
+  2. Create MBR partition table
+  3. Create partition 1: FAT32 (3500 MB)
+  4. Burn ISO to partition 1
+  5. Create partition 2: ext4 (4096 MB)
+  6. Install bootloader (SYSLINUX/GRUB)
+  7. Sync and finalize
+
+Space Analysis:
+  ISO: 3500 MB
+  Persistence: 4096 MB
+  Overhead: ~100 MB
+  Total Used: 7696 MB
+  Remaining: 304 MB
+  Usage: 96%
+
+All checks passed. Ready to proceed with actual operation.
+Remove --dry-run flag to perform the actual operation.
+```
+
 ## Native Filesystem Support
 
 All filesystems are created directly by MyISO without external tools:
@@ -202,6 +303,7 @@ All filesystems are created directly by MyISO without external tools:
 - Dual FAT tables with proper initialization
 - Root directory cluster allocation
 - Volume label and serial number
+- Post-creation boot signature verification
 
 ### EXT4 (Native Implementation)
 - Superblock with ext4 features
@@ -209,6 +311,7 @@ All filesystems are created directly by MyISO without external tools:
 - Inode table initialization
 - UUID generation
 - Journal preparation structures
+- Superblock magic number verification
 
 ### NTFS (Native Implementation)
 - Boot sector with NTFS BPB
@@ -272,6 +375,7 @@ Offset   Size   Description
    - Features (extent, flex_bg, etc.)
    - Volume UUID
    - Volume label
+   - Magic number (0xEF53)
 
 2. **Block Group Descriptors**
    - Bitmap locations
@@ -321,6 +425,12 @@ Offset   Size   Description
 - 4MB buffer size for optimal throughput
 - Achieves 40-70 MB/s on USB 3.0
 
+### CRC32 Optimization
+- Pre-computed lookup table (256 entries)
+- Single-pass calculation
+- 8x faster than bit-by-bit method
+- Used for GPT header verification
+
 ### Buffer Management
 ```cpp
 // Aligned buffer allocation for O_DIRECT
@@ -334,7 +444,7 @@ sendfile(output_fd, input_fd, nullptr, chunk_size);
 ## Safety Features
 
 - Comprehensive privilege verification
-- Device validation and safety checks
+- Device validation (whole disk vs partition)
 - User confirmation for destructive operations
 - Atomic filesystem operations
 - Proper error handling and rollback
@@ -343,6 +453,7 @@ sendfile(output_fd, input_fd, nullptr, chunk_size);
 - Partition table commit with kernel notification
 - Pre-operation storage validation
 - Detailed error reporting with actionable suggestions
+- Post-creation integrity verification
 
 ## Building from Source
 
@@ -362,28 +473,38 @@ sudo make uninstall
 
 ## Advanced Examples
 
-### Create Multi-Boot USB with Storage Validation
+### Dry Run Before Actual Operation
 ```bash
-# Automatically validates if 8GB persistence fits
+# First, check what will happen
+sudo MI -i ubuntu-22.04.iso -p 8192 -f ext4 -o /dev/sdb --dry-run
+
+# If everything looks good, run for real
 sudo MI -i ubuntu-22.04.iso -p 8192 -f ext4 -o /dev/sdb
 ```
 
-### Maximum Performance Mode
+### Quick System Check
+```bash
+# Fast info display
+sudo MI -i debian.iso -o /dev/sdc -asi
+```
+
+### Automated Operation (No Prompts)
+```bash
+# Force mode for scripts
+sudo MI -i fedora.iso -p 4096 -o /dev/sdd -t mbr --force
+```
+
+### Maximum Performance with GPT
 ```bash
 # Fast mode with zero-copy I/O and GPT
-sudo MI -i debian.iso -o /dev/sdc -m -t gpt
+sudo MI -i arch.iso -o /dev/sdc -m -t gpt
 ```
 
-### Custom Filesystem with MBR
+### Custom Filesystem with Verification
 ```bash
-# Use NTFS for large file support with MBR partition table
-sudo MI -i windows.iso -p 4096 -f ntfs -o /dev/sdd -t mbr
-```
-
-### Interactive Mode (Recommended for Beginners)
-```bash
-# Will prompt for partition table selection
-sudo MI -i linux.iso -p 2048 -o /dev/sdb
+# Use NTFS, dry run first, then execute
+sudo MI -i windows.iso -p 4096 -f ntfs -o /dev/sdd --dry-run
+sudo MI -i windows.iso -p 4096 -f ntfs -o /dev/sdd
 ```
 
 ## Error Handling
@@ -402,6 +523,14 @@ Detailed error messages with context and suggestions:
 Maximum persistence you can use: 312 MB
 ```
 
+### Device Validation Error
+```
+[FATAL] Fatal Error: The target device is incomplete.
+  You specified: /dev/sdb3
+  Try instead: /dev/sdb
+  Just remove the number at the end.
+```
+
 ### Common Error Scenarios Handled
 - Invalid devices or missing privileges
 - Corrupted or invalid ISO files
@@ -410,6 +539,7 @@ Maximum persistence you can use: 312 MB
 - Filesystem creation failures
 - Bootloader installation issues
 - Space constraint violations
+- Partition vs whole disk errors
 
 ## Performance Benchmarks
 
@@ -422,6 +552,10 @@ Maximum persistence you can use: 312 MB
 
 ### "This is a privilege tool, to access this, use sudo"
 Run with sudo: `sudo MI ...`
+
+### "The target device is incomplete"
+You specified a partition (e.g., /dev/sdb1) instead of whole disk.
+Use the base device name (e.g., /dev/sdb) without the partition number.
 
 ### "Insufficient storage for requested persistence"
 The error message will show:
@@ -438,7 +572,7 @@ sudo MI -i ubuntu.iso -p 312 -f ext4 -o /dev/sdb
 
 ### "Fatal Error: Fail writing at /dev/sdX"
 - Check device is not mounted
-- Verify device path
+- Verify device path is correct (whole disk, not partition)
 - Ensure sufficient space
 - Check for hardware issues
 
@@ -446,6 +580,7 @@ sudo MI -i ubuntu.iso -p 312 -f ext4 -o /dev/sdb
 - ISO may have custom boot structure
 - Try different bootloader type
 - Check ISO integrity
+- Review detected ISO type
 
 ### Device Too Small
 The tool will calculate and display:
@@ -453,6 +588,12 @@ The tool will calculate and display:
 - Space shortage
 - Maximum persistence possible
 - Whether persistence is even possible on the device
+
+### Want to Preview Operations?
+Use `--dry-run` to see exactly what will happen without making changes:
+```bash
+sudo MI -i your.iso -p 4096 -o /dev/sdb --dry-run
+```
 
 ## Contributing
 
@@ -462,6 +603,7 @@ This is an open-source project. Contributions welcome:
 - UEFI boot support
 - Additional bootloader support
 - Enhanced storage optimization algorithms
+- Additional ISO format detection
 
 ## License
 
@@ -475,6 +617,7 @@ Open Source Project - Not Distributed
 - SYSLINUX Project Documentation
 - MBR/GPT Standards (UEFI Specification)
 - ISO 9660 Standard
+- El Torito Bootable CD-ROM Specification
 
 ## Changelog
 
@@ -484,6 +627,14 @@ Open Source Project - Not Distributed
 - Added comprehensive storage validation with helpful error messages
 - Improved error reporting with exact shortage calculations
 - Added smart suggestions for maximum available persistence
+- Implemented --dry-run mode for operation simulation
+- Added -asi flag for quick aggressive system info display
+- Added --force option to bypass confirmation prompts
+- Implemented ISO type detection (Pure ISO, El Torito, Hybrid)
+- Enhanced MBR/GPT implementation with optimized CRC32 (8x faster)
+- Optimized filesystem creation with O_DIRECT support
+- Added device validation to reject partition paths
+- Added post-creation filesystem integrity verification
 - Fixed compilation errors and improved code quality
 - Enhanced user prompts with formatted display and manual links
 
@@ -496,8 +647,6 @@ Open Source Project - Not Distributed
 - Progress bar with ETA
 - Colorized output
 - Comprehensive error handling
-
----
 
 **Built with modern C++17 and low-level system programming**
 

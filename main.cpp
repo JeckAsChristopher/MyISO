@@ -10,7 +10,10 @@
 #include "misc/version.hpp"
 #include <iostream>
 #include <string>
+#include <algorithm>
+#include <getopt.h>
 #include <unistd.h>
+#include <regex>
 
 struct Options {
     std::string isoPath;
@@ -19,6 +22,9 @@ struct Options {
     FilesystemSupport::FSType fsType = FilesystemSupport::FSType::EXT4;
     bool usePersistence = false;
     bool useFastMode = false;
+    bool dryRun = false;
+    bool aggressiveInfo = false;
+    bool forceOperation = false;
     BootStructures::TableType tableType = BootStructures::TableType::MBR;
 };
 
@@ -33,13 +39,17 @@ void printUsage() {
     std::cout << "  -m             Use fast mode for ISO burning\n";
     std::cout << "  -t <type>      Partition table type (mbr or gpt)\n";
     std::cout << "                 If not specified, will prompt interactively\n";
+    std::cout << "  --dry-run      Show all information without performing operations\n";
+    std::cout << "  -asi           Show aggressive system info (quick, non-comprehensive)\n";
+    std::cout << "  --force        Force operation, bypass warnings\n";
     std::cout << "  -v             Show version information\n";
     std::cout << "  -h             Show this help message\n\n";
     
     std::cout << Colors::bold("Examples:") << "\n";
     std::cout << "  MI -i ubuntu.iso -o /dev/sdb\n";
-    std::cout << "  MI -i ubuntu.iso -p 4096 -f ext4 -o /dev/sdb\n";
-    std::cout << "  MI -i linux.iso -p 2048 -o /dev/sdc -m -t gpt\n\n";
+    std::cout << "  MI -i ubuntu.iso -p 4096 -f ext4 -o /dev/sdb --dry-run\n";
+    std::cout << "  MI -i linux.iso -p 2048 -o /dev/sdc -m -t gpt --force\n";
+    std::cout << "  MI -i debian.iso -o /dev/sdb -asi\n\n";
     
     std::cout << Colors::yellow("Note: ") << "This tool requires root privileges (use sudo)\n";
 }
@@ -47,7 +57,15 @@ void printUsage() {
 bool parseArguments(int argc, char* argv[], Options& opts) {
     int opt;
     
-    while ((opt = getopt(argc, argv, "i:o:p:f:t:mvh")) != -1) {
+    static struct option long_options[] = {
+        {"dry-run", no_argument, 0, 'd'},
+        {"force", no_argument, 0, 'F'},
+        {0, 0, 0, 0}
+    };
+    
+    int option_index = 0;
+    
+    while ((opt = getopt_long(argc, argv, "i:o:p:f:t:mvha", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'i':
                 opts.isoPath = optarg;
@@ -93,6 +111,15 @@ bool parseArguments(int argc, char* argv[], Options& opts) {
             case 'm':
                 opts.useFastMode = true;
                 break;
+            case 'd':
+                opts.dryRun = true;
+                break;
+            case 'a':
+                opts.aggressiveInfo = true;
+                break;
+            case 'F':
+                opts.forceOperation = true;
+                break;
             case 'v':
                 Version::printVersion();
                 exit(0);
@@ -117,6 +144,93 @@ bool parseArguments(int argc, char* argv[], Options& opts) {
     }
     
     return true;
+}
+
+bool isPartitionDevice(const std::string& device) {
+    // Check if device ends with a number (partition)
+    if (device.empty()) return false;
+    
+    char lastChar = device.back();
+    return (lastChar >= '0' && lastChar <= '9');
+}
+
+std::string getBaseDevice(const std::string& device) {
+    std::string base = device;
+    while (!base.empty() && base.back() >= '0' && base.back() <= '9') {
+        base.pop_back();
+    }
+    return base;
+}
+
+void showDryRunInfo(const Options& opts, size_t deviceSizeMB, size_t isoSizeMB, 
+                    const std::string& isoType) {
+    std::cout << "\n" << Colors::bold(Colors::cyan("=== DRY RUN MODE - NO CHANGES WILL BE MADE ===")) << "\n\n";
+    
+    std::cout << Colors::bold("Input Information:") << "\n";
+    std::cout << "  ISO File: " << opts.isoPath << "\n";
+    std::cout << "  ISO Size: " << isoSizeMB << " MB\n";
+    std::cout << "  ISO Type: " << isoType << "\n";
+    std::cout << "  Target Device: " << opts.device << "\n";
+    std::cout << "  Device Size: " << deviceSizeMB << " MB (" << (deviceSizeMB/1024) << " GB)\n\n";
+    
+    std::cout << Colors::bold("Operation Details:") << "\n";
+    std::cout << "  Partition Table: " << (opts.tableType == BootStructures::TableType::MBR ? "MBR" : "GPT") << "\n";
+    std::cout << "  Burn Mode: " << (opts.useFastMode ? "Fast (Zero-Copy)" : "Raw (Standard)") << "\n";
+    
+    if (opts.usePersistence) {
+        std::cout << "  Persistence: Enabled\n";
+        std::cout << "  Persistence Size: " << opts.persistenceSize << " MB\n";
+        std::cout << "  Persistence Filesystem: " << FilesystemSupport::getFSName(opts.fsType) << "\n";
+    } else {
+        std::cout << "  Persistence: Disabled\n";
+    }
+    
+    std::cout << "\n" << Colors::bold("Planned Operations:") << "\n";
+    std::cout << "  1. Unmount all partitions on " << opts.device << "\n";
+    std::cout << "  2. Create " << (opts.tableType == BootStructures::TableType::MBR ? "MBR" : "GPT") << " partition table\n";
+    
+    if (opts.usePersistence) {
+        std::cout << "  3. Create partition 1: FAT32 (" << isoSizeMB << " MB)\n";
+        std::cout << "  4. Burn ISO to partition 1\n";
+        std::cout << "  5. Create partition 2: " << FilesystemSupport::getFSName(opts.fsType) 
+                  << " (" << opts.persistenceSize << " MB)\n";
+        std::cout << "  6. Install bootloader (SYSLINUX/GRUB)\n";
+    } else {
+        std::cout << "  3. Burn ISO directly to device\n";
+        std::cout << "  4. Install bootloader (SYSLINUX/GRUB)\n";
+    }
+    
+    std::cout << "  " << (opts.usePersistence ? "7" : "5") << ". Sync and finalize\n";
+    
+    size_t totalUsed = isoSizeMB + (opts.usePersistence ? opts.persistenceSize : 0) + 100;
+    size_t remaining = deviceSizeMB - totalUsed;
+    
+    std::cout << "\n" << Colors::bold("Space Analysis:") << "\n";
+    std::cout << "  ISO: " << isoSizeMB << " MB\n";
+    if (opts.usePersistence) {
+        std::cout << "  Persistence: " << opts.persistenceSize << " MB\n";
+    }
+    std::cout << "  Overhead: ~100 MB\n";
+    std::cout << "  Total Used: " << totalUsed << " MB\n";
+    std::cout << "  Remaining: " << remaining << " MB\n";
+    std::cout << "  Usage: " << ((totalUsed * 100) / deviceSizeMB) << "%\n";
+    
+    std::cout << "\n" << Colors::green("All checks passed. Ready to proceed with actual operation.") << "\n";
+    std::cout << Colors::yellow("Remove --dry-run flag to perform the actual operation.") << "\n\n";
+}
+
+void showAggressiveInfo(const Options& opts) {
+    std::cout << Colors::bold(Colors::cyan("\n=== AGGRESSIVE SYSTEM INFO ===\n"));
+    std::cout << "ISO: " << opts.isoPath << "\n";
+    std::cout << "DEV: " << opts.device << "\n";
+    std::cout << "MODE: " << (opts.useFastMode ? "FAST" : "RAW") << "\n";
+    std::cout << "PTABLE: " << (opts.tableType == BootStructures::TableType::MBR ? "MBR" : "GPT") << "\n";
+    if (opts.usePersistence) {
+        std::cout << "PERSIST: " << opts.persistenceSize << "MB " 
+                  << FilesystemSupport::getFSName(opts.fsType) << "\n";
+    }
+    std::cout << "FORCE: " << (opts.forceOperation ? "YES" : "NO") << "\n";
+    std::cout << Colors::cyan("===========================\n\n");
 }
 
 BootStructures::TableType promptPartitionTableType() {
@@ -181,8 +295,26 @@ int main(int argc, char* argv[]) {
         
         ErrorHandler::checkPrivileges();
         
+        // Show aggressive info if requested
+        if (opts.aggressiveInfo) {
+            showAggressiveInfo(opts);
+            if (!opts.dryRun) {
+                return 0; // Exit after showing info unless dry-run
+            }
+        }
+        
         Logs::info("ISO File: " + opts.isoPath);
         Logs::info("Target Device: " + opts.device);
+        
+        // Validate device is not a partition
+        if (isPartitionDevice(opts.device)) {
+            std::string baseDevice = getBaseDevice(opts.device);
+            Logs::fatal("Fatal Error: The target device is incomplete.");
+            std::cerr << Colors::red("  You specified: " + opts.device) << std::endl;
+            std::cerr << Colors::green("  Try instead: " + baseDevice) << std::endl;
+            std::cerr << Colors::yellow("  Just remove the number at the end.") << std::endl;
+            return 1;
+        }
         
         if (!DeviceHandler::validateDevice(opts.device)) {
             throw DeviceError(opts.device, "Invalid block device");
@@ -191,6 +323,9 @@ int main(int argc, char* argv[]) {
         if (!ISOBurner::validateISO(opts.isoPath)) {
             throw FileError(opts.isoPath, "Invalid ISO file");
         }
+        
+        std::string isoType = ISOBurner::detectISOType(opts.isoPath);
+        Logs::info("ISO Type: " + isoType);
         
         size_t deviceSize = DeviceHandler::getDeviceSize(opts.device);
         size_t isoSize = ISOBurner::getISOSize(opts.isoPath);
@@ -241,6 +376,12 @@ int main(int argc, char* argv[]) {
         opts.tableType = promptPartitionTableType();
         std::cout << "\n";
         
+        // Show dry-run information and exit if requested
+        if (opts.dryRun) {
+            showDryRunInfo(opts, deviceSizeMB, isoSizeMB, isoType);
+            return 0;
+        }
+        
         std::cout << Colors::yellow("\nWARNING: All data on " + opts.device + 
                      " will be destroyed!") << std::endl;
         std::cout << "Continue? (yes/no): ";
@@ -248,9 +389,13 @@ int main(int argc, char* argv[]) {
         std::string confirm;
         std::cin >> confirm;
         
-        if (confirm != "yes") {
+        if (confirm != "yes" && !opts.forceOperation) {
             Logs::info("Operation cancelled by user");
             return 0;
+        }
+        
+        if (opts.forceOperation && confirm != "yes") {
+            Logs::warning("Proceeding with --force flag");
         }
         
         if (opts.usePersistence) {
